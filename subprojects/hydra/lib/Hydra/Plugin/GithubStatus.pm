@@ -63,13 +63,15 @@ sub common {
                 }
 
                 my $sendStatus = sub {
-                    my ($input, $owner, $repo, $rev) = @_;
+                    my ($input, $owner, $repo, $rev, $host) = @_;
 
                     my $key = $owner . "-" . $repo . "-" . $rev;
                     return if exists $seen{$input}->{$key};
                     $seen{$input}->{$key} = 1;
 
-                    my $url = "https://api.github.com/repos/$owner/$repo/statuses/$rev";
+                    my $apibase = (defined $host && $host ne "" && $host ne "github.com")
+                        ? "https://$host/api/v3" : "https://api.github.com";
+                    my $url = "$apibase/repos/$owner/$repo/statuses/$rev";
                     my $req = HTTP::Request->new('POST', $url);
                     $req->header('Content-Type' => 'application/json');
                     $req->header('Accept' => 'application/vnd.github.v3+json');
@@ -97,8 +99,15 @@ sub common {
                 if (defined $eval->flake) {
                     my $fl = $eval->flake;
                     print STDERR "Flake is $fl\n";
-                    if ($eval->flake =~ m!github:([^/]+)/([^/]+)/([[:xdigit:]]{40})(\?narHash[^ ]*)?$! or $eval->flake =~ m!git\+ssh://git\@github.com/([^/]+)/([^/]+)\?.*rev=([[:xdigit:]]{40})(\?narHash[^ ]*)?$!) {
-                        $sendStatus->("src", $1, $2, $3);
+                    if ($eval->flake =~ m!github:([^/]+)/([^/]+)/([[:xdigit:]]{40})!) {
+                        # github:OWNER/REPO/REV[?host=HOST&...];
+                        my ($owner, $repo, $rev) = ($1, $2, $3);
+                        my ($fhost) = $eval->flake =~ m![?&]host=([^&]+)!;
+                        $sendStatus->("src", $owner, $repo, $rev, $fhost);
+                    } elsif ($eval->flake =~ m!git\+(?:ssh|https)://(?:[^@]+\@)?([^/]+)/([^/]+)/([^/]+)\?.*rev=([[:xdigit:]]{40})!) {
+                        # git+(ssh|https)://[user@]HOST/OWNER/REPO?rev=foo
+                        my ($host, $owner, $repo, $rev) = ($1, $2, $3, $4);
+                        $sendStatus->("src", $owner, $repo, $rev, ($host eq "github.com" ? undef : $host));
                     } else {
                         print STDERR "Can't parse flake, skipping GitHub status update\n";
                     }
